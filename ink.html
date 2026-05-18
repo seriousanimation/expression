@@ -1,0 +1,693 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>Expression Distortion Art</title>
+    <style>
+        body {
+            margin: 0;
+            padding: 0;
+            overflow: hidden;
+            background: #000;
+            font-family: Arial, sans-serif;
+        }
+        
+        #container {
+            position: relative;
+            width: 100vw;
+            height: 100vh;
+            display: flex;
+            justify-content: center;
+            align-items: center;
+        }
+        
+        #videoElement {
+            display: none;
+        }
+        
+        #outputCanvas {
+            max-width: 100%;
+            max-height: 100%;
+            image-rendering: auto;
+            display: none;
+        }
+        
+        #setupScreen {
+            position: absolute;
+            top: 50%;
+            left: 50%;
+            transform: translate(-50%, -50%);
+            background: rgba(255, 255, 255, 0.95);
+            padding: 40px;
+            border-radius: 15px;
+            box-shadow: 0 10px 40px rgba(0, 0, 0, 0.5);
+            text-align: center;
+            max-width: 400px;
+            z-index: 200;
+        }
+        
+        #setupScreen h1 {
+            color: #333;
+            margin-top: 0;
+            font-size: 24px;
+        }
+        
+        #setupScreen p {
+            color: #666;
+            margin-bottom: 20px;
+            line-height: 1.6;
+        }
+        
+        #cameraSelect {
+            width: 100%;
+            padding: 12px;
+            font-size: 16px;
+            border: 2px solid #ddd;
+            border-radius: 8px;
+            margin-bottom: 20px;
+            background: white;
+            cursor: pointer;
+        }
+        
+        #startButton {
+            width: 100%;
+            padding: 15px;
+            font-size: 18px;
+            font-weight: bold;
+            color: white;
+            background: linear-gradient(135deg, #667eea 0%, #764ba2 100%);
+            border: none;
+            border-radius: 8px;
+            cursor: pointer;
+            transition: transform 0.2s, box-shadow 0.2s;
+        }
+        
+        #startButton:hover {
+            transform: translateY(-2px);
+            box-shadow: 0 5px 20px rgba(102, 126, 234, 0.4);
+        }
+        
+        #startButton:active {
+            transform: translateY(0);
+        }
+        
+        #startButton:disabled {
+            background: #ccc;
+            cursor: not-allowed;
+            transform: none;
+        }
+        
+        #loadingIndicator {
+            display: none;
+            margin-top: 15px;
+            color: #667eea;
+            font-size: 14px;
+        }
+        
+        .spinner {
+            border: 3px solid #f3f3f3;
+            border-top: 3px solid #667eea;
+            border-radius: 50%;
+            width: 30px;
+            height: 30px;
+            animation: spin 1s linear infinite;
+            margin: 10px auto;
+        }
+        
+        @keyframes spin {
+            0% { transform: rotate(0deg); }
+            100% { transform: rotate(360deg); }
+        }
+        
+        #status {
+            position: absolute;
+            top: 20px;
+            left: 20px;
+            color: white;
+            background: rgba(0, 0, 0, 0.7);
+            padding: 15px;
+            border-radius: 8px;
+            font-size: 14px;
+            z-index: 100;
+            display: none;
+        }
+        
+        #emotion {
+            position: absolute;
+            top: 20px;
+            right: 20px;
+            color: white;
+            background: rgba(0, 0, 0, 0.7);
+            padding: 15px;
+            border-radius: 8px;
+            font-size: 18px;
+            font-weight: bold;
+            z-index: 100;
+            display: none;
+        }
+        
+        .loading {
+            color: #4CAF50;
+        }
+        
+        .error {
+            color: #f44336;
+        }
+    </style>
+</head>
+<body>
+    <div id="container">
+        <div id="setupScreen">
+            <h1>🎨 Expression Distortion Art</h1>
+            <p>This interactive artwork transforms your appearance based on your facial expressions.</p>
+            <p><strong>😊 Happy:</strong> Gradient colors<br>
+            <strong>😨 Scared:</strong> Digital noise<br>
+            <strong>😐 Neutral:</strong> Flowing distortion</p>
+            
+            <label for="cameraSelect" style="display: block; text-align: left; margin-bottom: 8px; color: #333; font-weight: bold;">Select Camera:</label>
+            <select id="cameraSelect" disabled>
+                <option value="">Click button to access cameras</option>
+            </select>
+            
+            <button id="startButton">Grant Camera Access</button>
+            
+            <div id="loadingIndicator">
+                <div class="spinner"></div>
+                <p>Loading models...</p>
+            </div>
+        </div>
+        
+        <video id="videoElement" autoplay playsinline></video>
+        <canvas id="outputCanvas"></canvas>
+        <div id="status">Initializing...</div>
+        <div id="emotion">Emotion: Neutral</div>
+    </div>
+
+    <!-- MediaPipe Libraries -->
+    <script src="https://cdn.jsdelivr.net/npm/@mediapipe/camera_utils/camera_utils.js"></script>
+    <script src="https://cdn.jsdelivr.net/npm/@mediapipe/control_utils/control_utils.js"></script>
+    <script src="https://cdn.jsdelivr.net/npm/@mediapipe/drawing_utils/drawing_utils.js"></script>
+    <script src="https://cdn.jsdelivr.net/npm/@mediapipe/face_mesh/face_mesh.js"></script>
+    <script src="https://cdn.jsdelivr.net/npm/@mediapipe/pose/pose.js"></script>
+
+    <script>
+        const videoElement = document.getElementById('videoElement');
+        const canvasElement = document.getElementById('outputCanvas');
+        const canvasCtx = canvasElement.getContext('2d', { willReadFrequently: true });
+        const statusDiv = document.getElementById('status');
+        const emotionDiv = document.getElementById('emotion');
+        const setupScreen = document.getElementById('setupScreen');
+        const cameraSelect = document.getElementById('cameraSelect');
+        const startButton = document.getElementById('startButton');
+        const loadingIndicator = document.getElementById('loadingIndicator');
+        
+        let currentEmotion = 'neutral';
+        let faceLandmarks = null;
+        let poseLandmarks = null;
+        let camera = null;
+        let modelsLoaded = false;
+        
+        // Distortion map - we'll create this programmatically based on your uploaded image
+        const distortionMap = createDistortionMap();
+        
+        function createDistortionMap() {
+            // Create a distortion map similar to your uploaded image
+            // This creates flowing, organic distortion patterns
+            const size = 256;
+            const map = document.createElement('canvas');
+            map.width = size;
+            map.height = size;
+            const ctx = map.getContext('2d');
+            
+            // Create flowing contour-like distortion
+            const imageData = ctx.createImageData(size, size);
+            const data = imageData.data;
+            
+            for (let y = 0; y < size; y++) {
+                for (let x = 0; x < size; x++) {
+                    const i = (y * size + x) * 4;
+                    
+                    // Create flowing distortion based on sine waves
+                    const dx = Math.sin(x / 20 + y / 30) * 30;
+                    const dy = Math.cos(y / 20 + x / 30) * 30;
+                    
+                    // Store distortion as color values (normalized to 0-255)
+                    data[i] = (dx + 128);     // Red channel = X displacement
+                    data[i + 1] = (dy + 128); // Green channel = Y displacement
+                    data[i + 2] = 128;        // Blue channel = unused
+                    data[i + 3] = 255;        // Alpha
+                }
+            }
+            
+            ctx.putImageData(imageData, 0, 0);
+            return map;
+        }
+        
+        // Get available cameras - using working pattern from mediapipe.html
+        async function getCameras() {
+            try {
+                // Request initial permission to see device labels
+                await navigator.mediaDevices.getUserMedia({ video: true });
+                
+                const devices = await navigator.mediaDevices.enumerateDevices();
+                const videoDevices = devices.filter(device => device.kind === 'videoinput');
+                
+                cameraSelect.innerHTML = '';
+                
+                if (videoDevices.length === 0) {
+                    cameraSelect.innerHTML = '<option value="">No cameras found</option>';
+                    return false;
+                }
+                
+                videoDevices.forEach((device, index) => {
+                    const option = document.createElement('option');
+                    option.value = device.deviceId;
+                    option.text = device.label || `Camera ${index + 1}`;
+                    cameraSelect.appendChild(option);
+                });
+                
+                return true;
+                
+            } catch (err) {
+                console.error("Camera access denied or unavailable.", err);
+                cameraSelect.innerHTML = '<option>No camera access</option>';
+                return false;
+            }
+        }
+        
+        // Initialize Face Mesh for expression detection
+        const faceMesh = new FaceMesh({
+            locateFile: (file) => {
+                return `https://cdn.jsdelivr.net/npm/@mediapipe/face_mesh/${file}`;
+            }
+        });
+        
+        faceMesh.setOptions({
+            maxNumFaces: 1,
+            refineLandmarks: true,
+            minDetectionConfidence: 0.5,
+            minTrackingConfidence: 0.5
+        });
+        
+        faceMesh.onResults(onFaceResults);
+        
+        // Initialize Pose for body detection
+        const pose = new Pose({
+            locateFile: (file) => {
+                return `https://cdn.jsdelivr.net/npm/@mediapipe/pose/${file}`;
+            }
+        });
+        
+        pose.setOptions({
+            modelComplexity: 1,
+            smoothLandmarks: true,
+            enableSegmentation: true,
+            smoothSegmentation: true,
+            minDetectionConfidence: 0.5,
+            minTrackingConfidence: 0.5
+        });
+        
+        pose.onResults(onPoseResults);
+        
+        function onFaceResults(results) {
+            faceLandmarks = results.multiFaceLandmarks ? results.multiFaceLandmarks[0] : null;
+            
+            if (faceLandmarks) {
+                // Detect emotion based on facial landmarks
+                detectEmotion(faceLandmarks);
+            }
+        }
+        
+        function onPoseResults(results) {
+            poseLandmarks = results.poseLandmarks;
+        }
+        
+        function detectEmotion(landmarks) {
+            // Simple emotion detection based on mouth and eye landmarks
+            // This is a basic implementation - you can enhance it
+            
+            // Get key facial points
+            const leftMouthCorner = landmarks[61];
+            const rightMouthCorner = landmarks[291];
+            const topLip = landmarks[13];
+            const bottomLip = landmarks[14];
+            const leftEye = landmarks[159];
+            const rightEye = landmarks[386];
+            const leftEyebrow = landmarks[70];
+            const rightEyebrow = landmarks[300];
+            
+            // Calculate smile (mouth width vs height)
+            const mouthWidth = Math.sqrt(
+                Math.pow(rightMouthCorner.x - leftMouthCorner.x, 2) +
+                Math.pow(rightMouthCorner.y - leftMouthCorner.y, 2)
+            );
+            const mouthHeight = Math.abs(topLip.y - bottomLip.y);
+            const smileRatio = mouthWidth / (mouthHeight + 0.001);
+            
+            // Calculate eye openness
+            const eyeOpenness = Math.abs(leftEye.y - leftEyebrow.y) + Math.abs(rightEye.y - rightEyebrow.y);
+            
+            // Determine emotion
+            if (smileRatio > 8 && mouthHeight > 0.02) {
+                currentEmotion = 'happy';
+            } else if (eyeOpenness > 0.15) {
+                currentEmotion = 'scared';
+            } else {
+                currentEmotion = 'neutral';
+            }
+            
+            emotionDiv.textContent = `Emotion: ${currentEmotion.toUpperCase()}`;
+        }
+        
+        function applyDistortion(sourceCanvas, landmarks) {
+            const width = sourceCanvas.width;
+            const height = sourceCanvas.height;
+            
+            // Create temporary canvas for distortion
+            const tempCanvas = document.createElement('canvas');
+            tempCanvas.width = width;
+            tempCanvas.height = height;
+            const tempCtx = tempCanvas.getContext('2d');
+            
+            // Draw original video
+            tempCtx.drawImage(sourceCanvas, 0, 0);
+            
+            const sourceData = tempCtx.getImageData(0, 0, width, height);
+            const distortedData = tempCtx.createImageData(width, height);
+            
+            // Get distortion map data
+            const distortCtx = distortionMap.getContext('2d');
+            const distortData = distortCtx.getImageData(0, 0, distortionMap.width, distortionMap.height);
+            
+            // Create body mask from pose landmarks
+            let bodyMask = null;
+            if (landmarks) {
+                bodyMask = createBodyMask(landmarks, width, height);
+            }
+            
+            // Apply displacement distortion
+            const distortionStrength = currentEmotion === 'scared' ? 0.3 : 
+                                      currentEmotion === 'happy' ? 0.2 : 0.1;
+            
+            for (let y = 0; y < height; y++) {
+                for (let x = 0; x < width; x++) {
+                    const i = (y * width + x) * 4;
+                    
+                    // Check if pixel is part of body
+                    let inBody = true;
+                    if (bodyMask) {
+                        const maskValue = bodyMask[(y * width + x) * 4];
+                        inBody = maskValue > 128;
+                    }
+                    
+                    if (inBody) {
+                        // Get distortion values from distortion map
+                        const mapX = Math.floor((x / width) * distortionMap.width);
+                        const mapY = Math.floor((y / height) * distortionMap.height);
+                        const mapI = (mapY * distortionMap.width + mapX) * 4;
+                        
+                        // Read displacement from distortion map (normalized from 0-255 to -1 to 1)
+                        const dx = ((distortData.data[mapI] / 255) - 0.5) * 2 * distortionStrength * width;
+                        const dy = ((distortData.data[mapI + 1] / 255) - 0.5) * 2 * distortionStrength * height;
+                        
+                        // Sample from displaced position
+                        let srcX = Math.floor(x + dx);
+                        let srcY = Math.floor(y + dy);
+                        
+                        // Clamp to bounds
+                        srcX = Math.max(0, Math.min(width - 1, srcX));
+                        srcY = Math.max(0, Math.min(height - 1, srcY));
+                        
+                        const srcI = (srcY * width + srcX) * 4;
+                        
+                        distortedData.data[i] = sourceData.data[srcI];
+                        distortedData.data[i + 1] = sourceData.data[srcI + 1];
+                        distortedData.data[i + 2] = sourceData.data[srcI + 2];
+                        distortedData.data[i + 3] = sourceData.data[srcI + 3];
+                    } else {
+                        // Outside body - keep original
+                        distortedData.data[i] = sourceData.data[i];
+                        distortedData.data[i + 1] = sourceData.data[i + 1];
+                        distortedData.data[i + 2] = sourceData.data[i + 2];
+                        distortedData.data[i + 3] = sourceData.data[i + 3];
+                    }
+                }
+            }
+            
+            return distortedData;
+        }
+        
+        function createBodyMask(landmarks, width, height) {
+            // Create a mask canvas
+            const maskCanvas = document.createElement('canvas');
+            maskCanvas.width = width;
+            maskCanvas.height = height;
+            const maskCtx = maskCanvas.getContext('2d');
+            
+            // Draw body outline
+            maskCtx.fillStyle = 'white';
+            maskCtx.beginPath();
+            
+            // Create body outline from pose landmarks
+            const bodyPoints = [
+                0,  // nose
+                2,  // left eye
+                5,  // right eye
+                7,  // left ear
+                8,  // right ear
+                11, // left shoulder
+                12, // right shoulder
+                23, // left hip
+                24, // right hip
+                11  // back to left shoulder
+            ];
+            
+            bodyPoints.forEach((idx, i) => {
+                const point = landmarks[idx];
+                const x = point.x * width;
+                const y = point.y * height;
+                
+                if (i === 0) {
+                    maskCtx.moveTo(x, y);
+                } else {
+                    maskCtx.lineTo(x, y);
+                }
+            });
+            
+            maskCtx.closePath();
+            maskCtx.fill();
+            
+            return maskCtx.getImageData(0, 0, width, height).data;
+        }
+        
+        function applyEmotionEffect(imageData, width, height) {
+            const data = imageData.data;
+            
+            if (currentEmotion === 'happy') {
+                // Apply gradient effect: gray, pink, yellow
+                for (let y = 0; y < height; y++) {
+                    for (let x = 0; x < width; x++) {
+                        const i = (y * width + x) * 4;
+                        
+                        const r = data[i];
+                        const g = data[i + 1];
+                        const b = data[i + 2];
+                        
+                        // Create gradient based on position
+                        const gradientPos = (x / width + y / height) / 2;
+                        
+                        // Gray to Pink to Yellow gradient
+                        let mixR, mixG, mixB;
+                        if (gradientPos < 0.33) {
+                            // Gray to Pink
+                            const t = gradientPos / 0.33;
+                            mixR = r * 0.7 + 255 * t * 0.3;
+                            mixG = g * 0.7 + 192 * t * 0.3;
+                            mixB = b * 0.7 + 203 * t * 0.3;
+                        } else if (gradientPos < 0.66) {
+                            // Pink to Yellow
+                            const t = (gradientPos - 0.33) / 0.33;
+                            mixR = r * 0.6 + (255 * (1 - t) + 255 * t) * 0.4;
+                            mixG = g * 0.6 + (192 * (1 - t) + 255 * t) * 0.4;
+                            mixB = b * 0.6 + (203 * (1 - t) + 100 * t) * 0.4;
+                        } else {
+                            // Yellow blend
+                            const t = (gradientPos - 0.66) / 0.34;
+                            mixR = r * 0.5 + 255 * 0.5;
+                            mixG = g * 0.5 + 255 * 0.5;
+                            mixB = b * 0.5 + 100 * 0.5;
+                        }
+                        
+                        data[i] = mixR;
+                        data[i + 1] = mixG;
+                        data[i + 2] = mixB;
+                    }
+                }
+            } else if (currentEmotion === 'scared') {
+                // Apply noise effect with color distortion
+                for (let y = 0; y < height; y++) {
+                    for (let x = 0; x < width; x++) {
+                        const i = (y * width + x) * 4;
+                        
+                        // Add RGB channel noise/glitch
+                        const noiseStrength = 80;
+                        const noise = (Math.random() - 0.5) * noiseStrength;
+                        
+                        // RGB channel separation/glitch
+                        const offsetX = Math.floor(Math.random() * 6 - 3);
+                        const offsetY = Math.floor(Math.random() * 6 - 3);
+                        
+                        let srcX = Math.max(0, Math.min(width - 1, x + offsetX));
+                        let srcY = Math.max(0, Math.min(height - 1, y + offsetY));
+                        const srcI = (srcY * width + srcX) * 4;
+                        
+                        // Mix original with noise and color shifts
+                        data[i] = Math.max(0, Math.min(255, data[srcI] + noise + (Math.random() - 0.5) * 40));
+                        data[i + 1] = Math.max(0, Math.min(255, data[i + 1] + noise * 0.5));
+                        data[i + 2] = Math.max(0, Math.min(255, data[srcI + 2] - noise + (Math.random() - 0.5) * 60));
+                        
+                        // Random pixel corruption
+                        if (Math.random() < 0.02) {
+                            data[i] = Math.random() * 255;
+                            data[i + 1] = Math.random() * 255;
+                            data[i + 2] = Math.random() * 255;
+                        }
+                    }
+                }
+            }
+            
+            return imageData;
+        }
+        
+        async function processFrame() {
+            if (!videoElement.videoWidth) {
+                requestAnimationFrame(processFrame);
+                return;
+            }
+            
+            // Set canvas size to match video
+            if (canvasElement.width !== videoElement.videoWidth) {
+                canvasElement.width = videoElement.videoWidth;
+                canvasElement.height = videoElement.videoHeight;
+            }
+            
+            // Draw video frame to canvas
+            canvasCtx.save();
+            canvasCtx.clearRect(0, 0, canvasElement.width, canvasElement.height);
+            canvasCtx.drawImage(videoElement, 0, 0, canvasElement.width, canvasElement.height);
+            
+            // Apply distortion if we have pose landmarks
+            if (poseLandmarks) {
+                const distortedData = applyDistortion(canvasElement, poseLandmarks);
+                const emotionData = applyEmotionEffect(distortedData, canvasElement.width, canvasElement.height);
+                canvasCtx.putImageData(emotionData, 0, 0);
+            } else {
+                // Just apply emotion effect without distortion
+                const imageData = canvasCtx.getImageData(0, 0, canvasElement.width, canvasElement.height);
+                const emotionData = applyEmotionEffect(imageData, canvasElement.width, canvasElement.height);
+                canvasCtx.putImageData(emotionData, 0, 0);
+            }
+            
+            canvasCtx.restore();
+            
+            requestAnimationFrame(processFrame);
+        }
+        
+        // Start button click handler - simplified to match working pattern
+        startButton.addEventListener('click', async () => {
+            startButton.disabled = true;
+            startButton.textContent = 'Starting...';
+            loadingIndicator.style.display = 'block';
+            
+            try {
+                // Request camera permission and get list
+                const success = await getCameras();
+                
+                if (!success) {
+                    throw new Error('Could not access cameras');
+                }
+                
+                // Enable camera selection
+                cameraSelect.disabled = false;
+                
+                // Auto-select first camera
+                const firstCamera = cameraSelect.options[0].value;
+                
+                // Setup camera with first available device
+                const constraints = {
+                    video: { 
+                        deviceId: firstCamera ? { exact: firstCamera } : undefined,
+                        width: 1280, 
+                        height: 720 
+                    }
+                };
+                
+                const stream = await navigator.mediaDevices.getUserMedia(constraints);
+                videoElement.srcObject = stream;
+                
+                // Wait for video to be ready
+                await new Promise((resolve) => {
+                    videoElement.onloadedmetadata = () => {
+                        videoElement.play();
+                        resolve();
+                    };
+                });
+                
+                // Setup MediaPipe Camera wrapper
+                camera = new Camera(videoElement, {
+                    onFrame: async () => {
+                        await faceMesh.send({image: videoElement});
+                        await pose.send({image: videoElement});
+                    },
+                    width: 1280,
+                    height: 720
+                });
+                
+                await camera.start();
+                
+                // Hide setup screen, show canvas
+                setupScreen.style.display = 'none';
+                canvasElement.style.display = 'block';
+                statusDiv.style.display = 'block';
+                emotionDiv.style.display = 'block';
+                
+                statusDiv.textContent = 'Camera Active - Make expressions!';
+                statusDiv.classList.add('loading');
+                
+                // Start processing frames
+                processFrame();
+                
+                // Allow camera switching
+                cameraSelect.addEventListener('change', async (e) => {
+                    const newDeviceId = e.target.value;
+                    const newConstraints = {
+                        video: { 
+                            deviceId: { exact: newDeviceId },
+                            width: 1280, 
+                            height: 720 
+                        }
+                    };
+                    const newStream = await navigator.mediaDevices.getUserMedia(newConstraints);
+                    videoElement.srcObject = newStream;
+                });
+                
+            } catch (err) {
+                console.error('Error starting camera:', err);
+                startButton.disabled = false;
+                startButton.textContent = 'Grant Camera Access';
+                loadingIndicator.style.display = 'none';
+                cameraSelect.disabled = true;
+                alert('Error starting camera: ' + err.message + '\n\nPlease:\n1. Grant camera permission when prompted\n2. Make sure your camera is connected\n3. Reload the page and try again');
+            }
+        });
+        
+        // Initialize on page load
+        window.addEventListener('load', async () => {
+            // Models will load automatically when needed
+            // Camera permission will be requested when user clicks button
+            console.log('Page loaded. Click button to grant camera access.');
+        });
+    </script>
+</body>
+</html>
